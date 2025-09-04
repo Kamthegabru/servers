@@ -1,89 +1,101 @@
-document.addEventListener('DOMContentLoaded', () => {
-    const serverSelect = document.getElementById('serverSelect');
-    const powerOnBtn = document.getElementById('powerOnBtn');
-    const powerOffBtn = document.getElementById('powerOffBtn');
-    const statusBtn = document.getElementById('statusBtn');
-    const powerControls = document.getElementById('power-controls');
-    const loadingSpinner = document.getElementById('loading-spinner');
-    const messageBox = document.getElementById('message-box');
-    const allButtons = document.querySelectorAll('.power-btn');
+const fetch = require('node-fetch');
 
-    function showMessage(message, type = 'info') {
-        messageBox.textContent = message;
-        messageBox.classList.remove('hidden', 'bg-red-100', 'text-red-700', 'bg-green-100', 'text-green-700', 'bg-blue-100', 'text-blue-700');
-        if (type === 'error') {
-            messageBox.classList.add('bg-red-100', 'text-red-700');
-        } else if (type === 'success') {
-            messageBox.classList.add('bg-green-100', 'text-green-700');
-        } else {
-            messageBox.classList.add('bg-blue-100', 'text-blue-700');
+// This is the main function that Netlify will run
+exports.handler = async (event, context) => {
+    // Only allow POST requests
+    if (event.httpMethod !== 'POST') {
+        return { statusCode: 405, body: 'Method Not Allowed' };
+    }
+
+    try {
+        const { action, serverId: serverKey } = JSON.parse(event.body);
+        const { CLIENT_ID, CLIENT_SECRET } = process.env;
+
+        // Map the friendly server key to the correct environment variable for the UUID
+        const workstationUuids = {
+            ws1: process.env.WORKSTATION_1_UUID,
+            ws2: process.env.WORKSTATION_2_UUID,
+            ws3: process.env.WORKSTATION_3_UUID,
+            ws4: process.env.WORKSTATION_4_UUID,
+            ws5: process.env.WORKSTATION_5_UUID,
+        };
+
+        const serverUuid = workstationUuids[serverKey];
+
+        // --- VALIDATION ---
+        if (!CLIENT_ID || !CLIENT_SECRET) {
+            return { statusCode: 500, body: JSON.stringify({ error: 'API credentials are not configured in environment variables.' }) };
         }
-        messageBox.classList.remove('hidden');
-    }
-
-    function toggleLoading(isLoading) {
-        if (isLoading) {
-            powerControls.classList.add('hidden');
-            loadingSpinner.classList.remove('hidden');
-            messageBox.classList.add('hidden');
-        } else {
-            powerControls.classList.remove('hidden');
-            loadingSpinner.classList.add('hidden');
+        if (!serverKey || !serverUuid) {
+             return { statusCode: 400, body: JSON.stringify({ error: `UUID for ${serverKey} is not configured or invalid.` }) };
         }
-    }
-    
-    function setButtonsDisabled(disabled) {
-        allButtons.forEach(button => button.disabled = disabled);
-    }
+        if (!['power_on', 'power_off', 'status'].includes(action)) {
+            return { statusCode: 400, body: JSON.stringify({ error: 'Invalid action specified.' }) };
+        }
 
-    async function makeRequest(action, serverKey) {
-        toggleLoading(true);
-        try {
-            const response = await fetch('/.netlify/functions/kamatera-proxy', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action, serverId: serverKey }), // Send the key, not the UUID
+        // --- STEP 1: AUTHENTICATE WITH KAMATERA ---
+        const authResponse = await fetch('https://console.kamatera.com/service/authenticate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ clientId: CLIENT_ID, secret: CLIENT_SECRET }),
+        });
+        
+        const authData = await authResponse.json();
+        if (!authResponse.ok || !authData.authentication) {
+            throw new Error('Kamatera authentication failed.');
+        }
+        const authToken = authData.authentication;
+
+        // --- STEP 2: PERFORM THE REQUESTED ACTION ---
+        const headers = {
+            'Content-Type': 'application/json',
+            'AuthClientId': CLIENT_ID,
+            'AuthSecret': authToken,
+        };
+
+        let response, data, message, status = 'success';
+
+        if (action === 'power_on' || action === 'power_off') {
+            const powerState = action === 'power_on' ? 'on' : 'off';
+            response = await fetch(`https://console.kamatera.com/service/server/${serverUuid}/power`, {
+                method: 'PUT',
+                headers,
+                body: JSON.stringify({ power: powerState }),
             });
-
-            const resultText = await response.text();
-            if (!response.ok) {
-                throw new Error(resultText || `Server returned an error: ${response.status} ${response.statusText}`);
-            }
-            
-            try {
-                const result = JSON.parse(resultText);
-                if (result.error) {
-                    throw new Error(result.error);
-                }
-                showMessage(result.message, result.status);
-            } catch (e) {
-                throw new Error(`Received an unexpected, non-JSON response from the server: ${resultText}`);
-            }
-
-        } catch (error) {
-            showMessage(`Error: ${error.message}`, 'error');
-        } finally {
-            toggleLoading(false);
+             if (!response.ok) throw new Error(await response.text());
+            message = `Successfully sent power ${powerState} command.`;
+        } else { // status
+            response = await fetch(`https://console.kamatera.com/service/server/${serverUuid}`, {
+                method: 'GET',
+                headers,
+            });
+             if (!response.ok) throw new Error(await response.text());
+            data = await response.json();
+            message = `Server status is currently: ${data.power.toUpperCase()}`;
         }
-    }
-    
-    function handleAction(action) {
-        const serverKey = serverSelect.value;
-        if (!serverKey) {
-            showMessage('Please select a workstation from the list.', 'error');
-            return;
+
+        return {
+            statusCode: 200,
+            body: JSON.stringify({ message, status }),
+        };
+
+    } catch (error) {
+        console.error('Function Error:', error);
+        // Try to parse the error if it's a JSON string from Kamatera
+        let errorMessage = error.message;
+        try {
+            const parsedError = JSON.parse(errorMessage);
+            if (parsedError.errors && parsedError.errors[0]) {
+                errorMessage = parsedError.errors[0].info || 'An unknown Kamatera API error occurred.';
+            }
+        } catch (e) {
+            // It wasn't JSON, so we use the original message
         }
-        makeRequest(action, serverKey);
+
+        return {
+            statusCode: 500,
+            body: JSON.stringify({ error: errorMessage }),
+        };
     }
+};
 
-    powerOnBtn.addEventListener('click', () => handleAction('power_on'));
-    powerOffBtn.addEventListener('click', () => handleAction('power_off'));
-    statusBtn.addEventListener('click', () => handleAction('status'));
-    
-    serverSelect.addEventListener('change', () => {
-        setButtonsDisabled(serverSelect.value === '');
-    });
-
-    // Initially disable buttons
-    setButtonsDisabled(true);
-});
