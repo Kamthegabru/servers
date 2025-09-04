@@ -47,10 +47,10 @@ exports.handler = async (event, context) => {
         const authToken = authData.authentication;
 
         // --- STEP 2: PERFORM THE REQUESTED ACTION ---
+        // **FIXED**: Using the standard 'Authorization: Bearer' header format.
         const headers = {
             'Content-Type': 'application/json',
-            'AuthClientId': CLIENT_ID,
-            'AuthSecret': authToken,
+            'Authorization': `Bearer ${authToken}`,
         };
 
         let response, data, message, status = 'success';
