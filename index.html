@@ -48,7 +48,7 @@
             </div>
 
             <div class="p-6 bg-blue-600 flex flex-col items-center text-center">
-                 <img src="logo.png" alt="SeaTech Consulting Logo" class="h-16 mb-4">
+                 <img src="https://www.seatechconsulting.com/wp-content/uploads/2022/07/st-logo-blue-white.png" alt="SeaTech Consulting Logo" class="h-16 mb-4">
                 <h1 class="text-2xl font-bold text-white">Workstation Control Panel</h1>
             </div>
 
@@ -211,10 +211,9 @@
                 showMessage(result.message, result.status);
 
             } catch (error) {
-                const errorMessage = error.message.includes('{') 
-                    ? JSON.parse(error.message).error // Try to parse JSON error from Kamatera
-                    : error.message;
-                showMessage(`Error: ${errorMessage}`, 'error');
+                // Safely display the error message from the server without risky parsing.
+                // This prevents the "Error: undefined" issue.
+                showMessage(`Error: ${error.message}`, 'error');
             } finally {
                 hideActionVisual();
             }
