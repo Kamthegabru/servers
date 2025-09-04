@@ -22,8 +22,9 @@
 
             <div id="workstation-control" class="p-6">
                 <div class="mb-4">
-                    <label for="serverIdInput" class="block text-sm font-medium text-gray-700">Workstation Name / ID</label>
-                    <input type="text" id="serverIdInput" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm" placeholder="Enter your workstation ID">
+                    <label for="serverIdInput" class="block text-sm font-medium text-gray-700">Workstation UUID</label>
+                    <input type="text" id="serverIdInput" class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm" placeholder="e.g., 1234abcd-12ab-34cd-56ef-1234567890ab">
+                    <p class="mt-2 text-xs text-gray-500">You can find the UUID in your Kamatera Cloud Panel under the server's "Information" tab.</p>
                 </div>
 
                 <div id="power-controls" class="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -104,13 +105,25 @@
                     body: JSON.stringify({ action, serverId }),
                 });
 
-                const result = await response.json();
+                // Get the response body as text first.
+                const resultText = await response.text();
 
-                if (!response.ok || result.error) {
-                    throw new Error(result.error || 'An unknown error occurred.');
+                // If the response was not successful (e.g., 404, 500), throw an error with the response body.
+                if (!response.ok) {
+                    throw new Error(resultText || `Server returned an error: ${response.status} ${response.statusText}`);
                 }
                 
-                showMessage(result.message, result.status);
+                // Now, try to parse the text as JSON.
+                try {
+                    const result = JSON.parse(resultText);
+                    if (result.error) {
+                        throw new Error(result.error);
+                    }
+                    showMessage(result.message, result.status);
+                } catch (e) {
+                    // This will catch errors if the successful response was not valid JSON.
+                    throw new Error(`Received an unexpected, non-JSON response from the server: ${resultText}`);
+                }
 
             } catch (error) {
                 showMessage(`Error: ${error.message}`, 'error');
@@ -122,7 +135,7 @@
         function handleAction(action) {
             const serverId = serverIdInput.value.trim();
             if (!serverId) {
-                showMessage('Please enter a Workstation Name / ID.', 'error');
+                showMessage('Please enter a Workstation UUID.', 'error');
                 return;
             }
             makeRequest(action, serverId);
